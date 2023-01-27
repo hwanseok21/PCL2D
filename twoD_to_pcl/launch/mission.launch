@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+
+<launch>
+  <node name="twoD_to_pcl_node" pkg="twoD_to_pcl" type="twoD_to_pcl_node" output="screen">
+
+    <param name="min_x"                 value="0"/>
+    <param name="max_x"                 value="2"/>
+    <param name="min_y"                 value="-0.3"/>
+    <param name="max_y"            value="0.5"/>
+
+
+    <param name="cluster_tolerance"       value="0.7"/>
+    <param name="cluster_minsize"         value="2"/>
+    <param name="cluster_maxsize"         value="500"/>
+
+    <param name="waypoint_offset_y"         value="0.35"/>
+    <param name="waypoint_offset_x"         value="0"/>
+    <param name="speed"         value="700"/>
+    
+    <param name="flag1_finish_dist"         value="0.35"/> 
+    <param name="flag2_finish_dist"         value="0.5"/> 
+    <param name="flag3_finish_dist"         value="1.8"/> 
+    
+    <param name="heading_offset"         value="600"/>
+    <param name="flag_2_angle"         value="0.9"/>   
+    <param name="sep_dynamic"         value="0.01"/>     
+      
+  </node>
+</launch>
+

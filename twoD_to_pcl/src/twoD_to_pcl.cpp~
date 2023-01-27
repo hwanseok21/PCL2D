@@ -1,0 +1,319 @@
+#include <ros/ros.h>
+#include <vector>
+#include <cmath>
+
+#include <sensor_msgs/PointCloud2.h>
+#include <laser_geometry/laser_geometry.h>
+#include <std_msgs/Float64.h>
+#include <geometry_msgs/Point.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Pose2D.h>
+#include <visualization_msgs/Marker.h>
+#include <tf/transform_listener.h>
+
+#include <pcl_ros/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/segmentation/extract_clusters.h>
+
+#include <pcl/io/pcd_io.h>
+#include <pcl/filters/conditional_removal.h>
+#include <pcl/filters/extract_indices.h>
+
+using namespace std;
+typedef pcl::PointXYZI pointType;
+
+class twoD_to_pcl{
+
+private:
+	ros::NodeHandle nh_;
+	ros::Subscriber sub_2d_;
+	ros::Publisher pub_points_, pub_center_;
+	
+	geometry_msgs::Point wayPoint_;	
+	
+	vector<pcl::PointCloud<pointType>> clustered_;
+	vector<pcl::PointXYZ> center_;
+	
+	//local variable
+	pcl::PointCloud<pointType>::Ptr msg;
+	//laser_geometry::LaserProjection projector_;
+	//tf::TransformListener listener_;
+
+
+	//parmeter
+	float min_x_, max_x_,min_y_, max_y_;
+	float cluster_tolerance_;
+	int cluster_minsize_;
+	int cluster_maxsize_;
+	
+public:
+	//creator
+	twoD_to_pcl() {
+		// show log in terminal
+		cout << "twoD_to_pcl Initialized" << endl;
+		
+		//pointcloud vector reset
+		msg.reset(new pcl::PointCloud<pointType>());	
+		
+		// initialize Settings
+		initSetup();	
+	}
+	
+	// destructor
+	~twoD_to_pcl(){
+		// show log in terminal
+		cout << "twoD_to_pcl Terminated" << endl;
+	}
+	
+	void initSetup();	
+	void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in);
+	void clustering();
+	void visualize_center(pcl::PointCloud<pointType> car);
+	//sensor_msgs::PointCloud2 laser2cloudmsg(const sensor_msgs::LaserScan::ConstPtr& laser);
+};
+
+	void twoD_to_pcl::initSetup() {
+		// initialize Flag
+		ros::param::get("~min_x", min_x_);
+		ros::param::get("~max_x", max_x_);
+		ros::param::get("~min_y", min_y_);
+		ros::param::get("~max_y", max_y_);
+
+		ros::param::get("~cluster_tolerance", cluster_tolerance_);
+		ros::param::get("~cluster_minsize", cluster_minsize_);
+		ros::param::get("~cluster_maxsize", cluster_maxsize_);
+
+		// set subscriber
+		sub_2d_ = nh_.subscribe("/lidar2D", 10, &twoD_to_pcl::scanCallback, this);
+
+		// set publisher
+		pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("/passed_points", 100);
+		pub_center_ = nh_.advertise<visualization_msgs::Marker>("/obstacle_center", 10);
+        	//pub_marker_ = nh_.advertise<visualization_msgs::Marker>("wayPoint", 10);
+	}
+
+//====================================================================================================
+	
+	/*
+	// laser scan -> point_cloud2 -> pointcloud<pointType>
+	//laser scan값을 그대로 가져옴 
+	
+	void twoD_to_pcl::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in) {
+		sensor_msgs::PointCloud2 cloud;
+		cloud = twoD_to_pcl::laser2cloudmsg(scan_in);
+		pcl::fromROSMsg(cloud, *msg);
+		
+	}
+	
+	sensor_msgs::PointCloud2 twoD_to_pcl::laser2cloudmsg(const sensor_msgs::LaserScan::ConstPtr& laser)
+	{
+		laser_geometry::LaserProjection projector;
+		sensor_msgs::PointCloud2 pc2_dst;
+		projector.projectLaser(*laser, pc2_dst,-1,laser_geometry::channel_option::Intensity | laser_geometry::channel_option::Distance);
+		pc2_dst.header.frame_id = "velodyne";
+
+		return pc2_dst;
+	}
+	*/
+
+//====================================================================================================
+	
+	/*
+    	//laser scan -> pointcloud -> pointcloud<pointType>
+    	//laser scan값을 그대로 가져옴 
+    	
+	void twoD_to_pcl::scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
+	{
+		sensor_msgs::PointCloud cloud;
+		projector_.projectLaser(*scan_in, cloud);
+	
+		pcl::PointCloud<pointType> tmp_cloud;	
+		pointType tmp_point;
+		cout << "==================="<< cloud.points.size()<< "===================" << endl;
+		for (int i = 0; i < cloud.points.size(); i++){
+			tmp_point.x = cloud.points[i].x;
+			tmp_point.y = cloud.points[i].y;
+			tmp_point.z = 0;
+			tmp_cloud.push_back(tmp_point);
+		}
+		
+		*msg = tmp_cloud;
+		// Do something with cloud.
+	}
+	*/
+	
+//====================================================================================================
+
+	
+	
+	//laser scan -> pointcloud<pointType>
+	//좌표까지 변환
+	
+	void twoD_to_pcl::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in) {
+		double angle = 0;
+		pcl::PointCloud<pointType> tmp_cloud;	
+		pointType tmp_point;
+		for (int i=0;i<(*scan_in).ranges.size();i++){
+			cout<< (*scan_in).ranges[i] <<endl;
+			tmp_point.x = float((*scan_in).ranges[i] * cos(angle)) ;
+			tmp_point.y = float((*scan_in).ranges[i] * sin(angle)) ;
+			tmp_point.z = 0.0;
+			tmp_point.intensity = float((*scan_in).intensities[i]);
+			tmp_cloud.push_back(tmp_point);
+			angle = angle + (1.0/180*M_PI);
+			//cout<<tmp_point.x << " || "<< tmp_point.y<<" || "<< tmp_point.intensity <<endl;
+		}
+		
+		*msg = tmp_cloud;
+	}
+	
+
+	
+//====================================================================================================
+
+	/*
+	// tf변환  ==>  안됨 
+	void twoD_to_pcl::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in){
+		cout << "hi"<< endl;
+		if(!listener_.waitForTransform(
+		scan_in->header.frame_id,
+		"/base_link",
+		scan_in->header.stamp + ros::Duration().fromSec(scan_in->ranges.size()*scan_in->time_increment),
+		ros::Duration(1.0))){
+		
+			return;
+		}
+		cout << "hi2" << endl;
+		sensor_msgs::PointCloud cloud;
+		projector_.transformLaserScanToPointCloud("/base_link",*scan_in, cloud, listener_);
+		
+		pointType tmp_point;
+		cout << "==================="<< cloud.points.size()<< "===================" << endl;
+		for (int i = 0; i < cloud.points.size(); i++){
+		
+			tmp_point.x = cloud.points[i].x;
+			tmp_point.y = cloud.points[i].y;
+			tmp_point.z = 0;
+			(*msg).push_back(tmp_point);
+		}
+		
+		// Do something with cloud.
+		
+	
+	}
+	*/
+
+	void twoD_to_pcl::clustering(){
+		pcl::PointCloud<pointType>::Ptr center (new pcl::PointCloud<pointType>);
+
+		pcl::PassThrough<pointType> pass;
+
+		pass.setInputCloud(msg);
+		pass.setFilterFieldName ("x");
+		pass.setFilterLimits(min_x_, max_x_);
+		pass.filter(*msg);
+
+		pass.setInputCloud(msg);
+		pass.setFilterFieldName("y");
+		pass.setFilterLimits(min_y_, max_y_);
+		pass.filter(*msg);
+
+
+		sensor_msgs::PointCloud2 filteredOutput;
+		pcl::toROSMsg(*msg, filteredOutput);
+		filteredOutput.header.frame_id = "velodyne";
+		pub_points_.publish(filteredOutput);
+
+		
+		pcl::search::KdTree<pointType>::Ptr kdtree(new pcl::search::KdTree<pointType>);
+		kdtree -> setInputCloud(msg);
+
+		std::vector<pcl::PointIndices> clusterIndices;
+		pcl::EuclideanClusterExtraction<pointType> ec;
+
+		ec.setClusterTolerance(cluster_tolerance_);
+		ec.setMinClusterSize(cluster_minsize_);
+		ec.setMaxClusterSize(cluster_maxsize_);
+		ec.setSearchMethod(kdtree);
+		ec.setInputCloud(msg);
+		ec.extract(clusterIndices);
+
+		ROS_INFO("cluster number %i", clusterIndices.size());
+
+		for (vector<pcl::PointIndices>::const_iterator it = clusterIndices.begin(); it != clusterIndices.end(); ++it) {
+		    pointType Pt_center;
+		    int count = 0;         
+		    for (vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); ++pit) {
+			    Pt_center.x += msg->points[*pit].x;
+			    Pt_center.y += msg->points[*pit].y;
+			    count ++;
+		    }            
+		    Pt_center.x = Pt_center.x/count;
+		    Pt_center.y = Pt_center.y/count;
+		    Pt_center.z = 0;            
+		    (*center).push_back(Pt_center);
+		}
+		
+		twoD_to_pcl::visualize_center(*center);
+		
+		//msg.reset(new pcl::PointCloud<pointType>());
+			    
+	}
+
+	void twoD_to_pcl::visualize_center(pcl::PointCloud<pointType> car) {
+		visualization_msgs::Marker car_pt;
+		geometry_msgs::Point point;
+
+		car_pt.header.frame_id = "velodyne";
+		car_pt.header.stamp = ros::Time::now();
+		car_pt.ns = "parked car";
+		car_pt.action = visualization_msgs::Marker::ADD;
+		car_pt.pose.orientation.w = 1.0;
+		car_pt.id = 1;
+		car_pt.type = visualization_msgs::Marker::POINTS;
+		car_pt.scale.x = 0.5;
+		car_pt.scale.y = 0.5;
+		car_pt.color.a = 1.0;
+		car_pt.color.g = 1.0f;
+
+		for (int i = 0 ; i<car.size();i++){
+		    point.x = car[i].x;
+		    point.y = car[i].y;
+		    point.z = 0;
+		    car_pt.points.push_back(point);
+		    pub_center_.publish(car_pt);
+		}
+	}
+	
+	
+
+	
+
+
+// ############################# Main Code #############################
+
+int main(int argc, char **argv) {
+	// set Node
+	ros::init(argc, argv, "twoD_to_pcl_node");
+
+	// 2d data to pcl data
+	twoD_to_pcl p;
+
+	//ros roop 
+	ros::Rate loop_rate(10);
+	while(ros::ok()){
+		ros::spinOnce();
+		p.clustering();
+		loop_rate.sleep();
+	}
+	
+	return 0;
+}
+
+
+
