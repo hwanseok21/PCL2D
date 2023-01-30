@@ -1,28 +1,24 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(twoD_to_pcl)
 
-## Compile as C++11, supported in ROS Kinetic and newer
-##dd_compile_options(-std=c++11)
-
 find_package(catkin REQUIRED
   geometry_msgs
-  message_generation
   roscpp
   std_msgs
   sensor_msgs
   visualization_msgs
   pcl_ros
-  pcl_conversions
   laser_geometry
-  tf
+  #tf
+  lidar2gps_msgs
 )
 
 
 
 ## Generate messages in the 'msg' folder
-add_message_files(
-  FILES
-)
+#add_message_files(
+#  FILES
+#)
 
 
 ## Generate added messages and services with any dependencies listed here
@@ -32,9 +28,8 @@ generate_messages(
 
 
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES static_small
-#  CATKIN_DEPENDS ackermann_msgs actionlib actionlib_msgs geometry_msgs message_generation message_runtime obstacle_detector roscpp rospy sensor_msgs visualization_msgs
+  LIBRARIES twoD_to_pcl
+  CATKIN_DEPENDS geometry_msgs roscpp sensor_msgs visualization_msgs pcl_ros laser_geometry  lidar2gps_msgs
 #  DEPENDS system_lib
 )
 

@@ -1,6 +1,7 @@
 #include <ros/ros.h>
 #include <vector>
 #include <cmath>
+#include <time.h>
 
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/Imu.h>
@@ -25,6 +26,8 @@
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/conditional_removal.h>
 #include <pcl/filters/extract_indices.h>
+#include <pcl/filters/extract_indices.h>
+#include <lidar2gps_msgs/lidar2gps.h>
 
 using namespace std;
 typedef pcl::PointXYZI pointType;
@@ -34,10 +37,12 @@ class twoD_to_pcl{
 private:
 	ros::NodeHandle nh_;
 	ros::Subscriber sub_2d_,sub_imu_;
-	ros::Publisher pub_points_, pub_center_, pub_waypoint_, pub_angle_, pub_speed_;
+	ros::Publisher pub_points_, pub_center_, pub_waypoint_, pub_angle_, pub_speed_, pub_control_;
 
 	std_msgs::Float64 speed_ ;
 	std_msgs::Float64 angle_ ;
+
+	lidar2gps_msgs::lidar2gps control_;
 	
 	//local variable
 	pcl::PointCloud<pointType>::Ptr msg;
@@ -46,16 +51,18 @@ private:
 	//tf::TransformListener listener_;
 
 	//parmeter
-	float min_x_, max_x_,min_y_, max_y_, cluster_tolerance_, offset_y_, offset_x_, 
-	finish_point1_,finish_point2_, finish_point3_, heading_offset_, flag_2_angle_, sep_dynamic_;
-	int cluster_minsize_, cluster_maxsize_;
+	float min_x_, max_x_,min_y_, max_y_, cluster_tolerance_,
+	finish_point1_, finish_point3_, sep_dynamic_, static_start_dist_;
+	int cluster_minsize_, cluster_maxsize_, static_param_, dynamic_param_;
 	
 	bool heading_record_ = true, finish_static_=false, is_dynamic_ = false;
-	double start_heading_ = 0, cur_heading_ = 0;
+	double start_heading_ = 0, cur_heading_ = 0, flag2_offset_;
 
 	float yyy_=1000;	
-	int mission_state_ = 6, flag_= 1, return_offset_ = 0, static_count_ = 0;
+	int mission_state_ = 6, flag_= 0, dynamic_count_ = 0, static_count_ = 0;
 	
+	clock_t start, finish;
+
 public:
 	//creator
 	twoD_to_pcl() {
@@ -89,7 +96,8 @@ public:
 };
 
 	void twoD_to_pcl::initSetup() {
-		angle_.data = 0.5;
+		control_.is_dynamic = false;
+		control_.is_static = false;
 		// initialize Flag
 		ros::param::get("~min_x", min_x_);
 		ros::param::get("~max_x", max_x_);
@@ -100,19 +108,18 @@ public:
 		ros::param::get("~cluster_minsize", cluster_minsize_);
 		ros::param::get("~cluster_maxsize", cluster_maxsize_);
 
-		ros::param::get("~waypoint_offset_y", offset_y_);
-		ros::param::get("~waypoint_offset_x", offset_x_);
-		ros::param::get("~speed", speed_.data);
 		ros::param::get("~flag1_finish_dist", finish_point1_);
-		ros::param::get("~flag2_finish_dist", finish_point2_);
 		ros::param::get("~flag3_finish_dist", finish_point3_);
-		ros::param::get("~heading_offset", heading_offset_);
-		ros::param::get("~flag_2_angle", flag_2_angle_);
+		ros::param::get("~flag2_time_offset", flag2_offset_);
+		ros::param::get("~static_start_dist", static_start_dist_);
+
 		ros::param::get("~sep_dynamic", sep_dynamic_);
+		ros::param::get("~dynamic_param", dynamic_param_);
+		ros::param::get("~static_param", static_param_);
 
 		// set subscriber
 		sub_2d_ = nh_.subscribe("/lidar2D", 10, &twoD_to_pcl::scanCallback, this);
-		sub_imu_ = nh_.subscribe("/imu", 10, &twoD_to_pcl::imuCallback, this);
+		//sub_imu_ = nh_.subscribe("/imu", 10, &twoD_to_pcl::imuCallback, this);
 
 
 		// set publisher
@@ -121,7 +128,7 @@ public:
 		pub_waypoint_ = nh_.advertise<visualization_msgs::Marker>("/waypoint", 10);
 		pub_speed_ = nh_.advertise<std_msgs::Float64>("/commands/motor/speed", 10);
 		pub_angle_ = nh_.advertise<std_msgs::Float64>("/commands/servo/position", 10);
-        //pub_marker_ = nh_.advertise<visualization_msgs::Marker>("wayPoint", 10);
+        pub_control_ = nh_.advertise<lidar2gps_msgs::lidar2gps>("/lidar_control", 10);
 	}
 
 	void twoD_to_pcl::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in) {
@@ -148,7 +155,7 @@ public:
 			*msg = tmp_cloud;
 	}
 
-
+/*
 	void twoD_to_pcl::imuCallback(const sensor_msgs::Imu::ConstPtr& data) {
 			tf::Quaternion q(data->orientation.x, data->orientation.y, data->orientation.z, data->orientation.w);
 			tf::Matrix3x3 m(q);
@@ -165,7 +172,7 @@ public:
 					ROS_INFO("START_HEADING: %lf",start_heading_);
 			}
 	}
-
+*/
 
 	bool cmp(pointType a, pointType b) { return a.x < b.x; }
 
@@ -225,9 +232,10 @@ public:
 
 		if (clusterIndices.size()>0){
 			sort(center_.begin(),center_.end(), cmp);
-			if (fabs(yyy_-center_[0].y) > sep_dynamic_ && fabs(yyy_-center_[0].y) < 50) is_dynamic_ = true;
+			if (fabs(yyy_-center_[0].y) > sep_dynamic_ && fabs(yyy_-center_[0].y) < 50) dynamic_count_ +=1;
+			else static_count_ +=1;
 			cout <<"yyyy____: " << fabs(yyy_ - center_[0].y) << endl;
-			cout <<"is dynamic: " << is_dynamic_ << endl;
+			//cout <<"is dynamic: " << is_dynamic_ << endl;
 			yyy_ = center_[0].y;
 			twoD_to_pcl::visualize_center(center_);
 			return true;
@@ -294,107 +302,95 @@ public:
 		cout << "=======================================================================" << endl;
 		cout << "FLAG: " << flag_ << endl;
 		cout << "OBS_X: " << center_[0].x << endl;
-		cout << "IS_DYNAMIC: " << is_dynamic_ << endl;
-		cout << "START_HEADING: " << start_heading_ << endl;
-		cout << "CUR_HEADING: " << cur_heading_ << endl;
-		cout << "ANGLE: " << angle_.data << endl;
-		cout << "SPEED: " << speed_.data << endl;
+		//cout << "START_HEADING: " << start_heading_ << endl;
+		//cout << "CUR_HEADING: " << cur_heading_ << endl;
+		//cout << "ANGLE: " << angle_.data << endl;
+		//cout << "SPEED: " << speed_.data << endl;
 	}
 
 	void twoD_to_pcl::small_static(){
 		geometry_msgs::Point wayPoint;
 		twoD_to_pcl::print();
 		switch (flag_){
+
+		case 0:
+			if(center_[0].x < static_start_dist_){
+				control_.is_static = true;
+				flag_=1;
+			}
+			break;
+
 		case 1:
-			if (twoD_to_pcl::clustering()){
-				wayPoint.x = center_[0].x-offset_x_;
-				wayPoint.y = center_[0].y+offset_y_;
-				angle_.data = twoD_to_pcl::cal_steer(wayPoint.x, wayPoint.y);
-				twoD_to_pcl::visualize_waypoint(wayPoint);
-
-				if (center_[0].x <= finish_point1_) flag_ = 2;
-				
+			if (center_[0].x <= finish_point1_) {
+				start = clock();
+				flag_ = 2;		
 			}
-
-			else{
-				angle_.data = 0.5;
-			}
-
 			break;
 
-		case 2:
-			angle_.data = flag_2_angle_;
-			if (cur_heading_ <= start_heading_*(100+heading_offset_)/100 && cur_heading_ >= start_heading_*(100-heading_offset_)/100) {
-				angle_.data = 0.5;
-				flag_ = 3;
-			}
+		case 2:{			
+			min_y_ = 0.01;
+			finish = clock();
 
+			double duration = (double)(finish - start) / CLOCKS_PER_SEC;
+			cout << "duration:  " << duration << endl;
+			if (duration > flag2_offset_) flag_ = 3;
+		
 			break;
+		}
 
 		case 3:
-			angle_.data = 0.5;
-			speed_.data = 1200;
-			min_y_ = 0.01;
-			if (twoD_to_pcl::clustering() && center_[0].x <= finish_point3_) {
-				cout << "====================DONE=====================================" << endl;
-				finish_static_ = true;
-				//gps에 끝났다고 알려줌  publish(finish_msg)
+			min_y_ = -1;
+			if (center_[0].x <= finish_point3_) {
+				cout << "====================DONE====================" << endl;
+				control_.is_static = false;
 				flag_=4;
 			}
 
 			break;
 
 		case 4:
-				return_offset_ += 1;
-				finish_static_ = false;
-				min_y_ = -1;
-				heading_record_ = true;
-				angle_.data = 0.5;
-			
-			if (return_offset_ > 100) flag_ = 1;
+			min_y_ = -1;
+			flag_ = 0;
+			static_count_ = 0;
 			break;
-
-
+		
 		default:
-			angle_.data = 0.5;
-
 			break;
+
 		}
 	}
 
 	void twoD_to_pcl::dynamin_static(){
+
 		if (twoD_to_pcl::clustering()){
-			if(is_dynamic_ && static_count_ < 20){
-				cout << "DYNAMIC_ON" << endl;
-				speed_.data = 0;
-				angle_.data = 0.5;
-			}
-			
-			else if (static_count_ > 20) {
-				static_count_+=1;
+			cout  << "dynamic_count_: " << dynamic_count_ << endl;
+			cout  << "static_count_: " << static_count_ << endl;
+
+			if (static_count_ >= static_param_){
+				cout << "STATIC_ON" << endl;
+				control_.is_dynamic = false;
 				twoD_to_pcl::small_static();
 			}
-			cout  << "static_count_: " << static_count_ << endl;
-			twoD_to_pcl::print();
+
+		
+			else if(dynamic_count_ >= dynamic_param_){
+				cout << "DYNAMIC_ON" << endl;
+				min_y_ = -0.3;
+				control_.is_dynamic = true;
+				control_.is_static = false;
+				static_count_ = 0;
+			}
 		}
 
 		else {
 			is_dynamic_ = false;
-			speed_.data = 1000;
-			angle_.data = 0.5;
-			
+			dynamic_count_ = 0;	
 		}
 
-		pub_speed_.publish(speed_);
-		pub_angle_.publish(angle_);
+		pub_control_.publish(control_);
 		
 	}
 
-
-	
-	
-
-	
 
 
 // ############################# Main Code #############################
@@ -407,7 +403,7 @@ int main(int argc, char **argv) {
 	twoD_to_pcl p;
 
 	//ros roop 
-	ros::Rate loop_rate(10);
+	ros::Rate loop_rate(30);
 	while(ros::ok()){
 		ros::spinOnce();
 		p.dynamin_static();
@@ -416,6 +412,3 @@ int main(int argc, char **argv) {
 	
 	return 0;
 }
-
-
-
