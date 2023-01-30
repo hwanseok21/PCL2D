@@ -1,9 +1,6 @@
 #include "twoD_to_pcl/twoD_to_pcl.h"
 
 	void twoD_to_pcl::initSetup() {
-		control_.is_dynamic = false;
-		control_.is_static = false;
-		
 		// initialize Flag
 		ros::param::get("~min_x", min_x_);
 		ros::param::get("~max_x", max_x_);
@@ -14,14 +11,11 @@
 		ros::param::get("~cluster_minsize", cluster_minsize_);
 		ros::param::get("~cluster_maxsize", cluster_maxsize_);
 
+		ros::param::get("~flag1_finish_dist", finish_point1_);
+		ros::param::get("~flag3_finish_dist", finish_point3_);
+		ros::param::get("~flag2_time_offset", flag2_offset_);
+		ros::param::get("~static_start_dist", static_start_dist_);
 
-		//static param
-		ros::param::get("~flag1_finish_dist", finish_point1_); //first obs
-		ros::param::get("~flag3_finish_dist", finish_point3_); //second obs
-		ros::param::get("~flag2_time_offset", flag2_offset_); //after first obs
-		ros::param::get("~static_start_dist", static_start_dist_); //mission start dist
-
-		//decision param
 		ros::param::get("~sep_dynamic", sep_dynamic_);
 		ros::param::get("~dynamic_param", dynamic_param_);
 		ros::param::get("~static_param", static_param_);
@@ -34,11 +28,10 @@
 		// set publisher
 		pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("/passed_points", 100);
 		pub_center_ = nh_.advertise<visualization_msgs::Marker>("/obstacle_center", 10);
-		pub_gps_ = nh_.advertise<lidar2gps_msgs::lidar2gps>("/lidar_control", 10);
-		
 		pub_waypoint_ = nh_.advertise<visualization_msgs::Marker>("/waypoint", 10);
 		pub_speed_ = nh_.advertise<std_msgs::Float64>("/commands/motor/speed", 10);
 		pub_angle_ = nh_.advertise<std_msgs::Float64>("/commands/servo/position", 10);
+        pub_control_ = nh_.advertise<lidar2gps_msgs::lidar2gps>("/lidar_control", 10);
 	}
 
 	void twoD_to_pcl::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in) {
@@ -54,7 +47,7 @@
 				tmp_point.z = 0.0;
 				tmp_point.intensity = float((*scan_in).intensities[i]);
 				
-				double h = abs(cur_heading_ - start_heading_) ;
+				//double h = abs(cur_heading_ - start_heading_) ;
 				//tmp_point.x = x * cos(h) + y * sin(h);
 				//tmp_point.y = x * sin(h) * (-1) + y * cos(h); 
 				tmp_cloud.push_back(tmp_point);
@@ -179,8 +172,6 @@
 		}
 	}
 	
-
-// ############################# Labacone Code #############################
 	void twoD_to_pcl::visualize_waypoint(geometry_msgs::Point wayPoint) {
 		visualization_msgs::Marker way_pt;
 
@@ -209,14 +200,8 @@
 
 		return (degree)*(-1) / 39 + 0.5;
 	}
-	
-	
-	
 
-
-// ############################# Static Code #############################
-
-	void twoD_to_pcl::print_static(){
+	void twoD_to_pcl::print(){
 		cout << "=======================================================================" << endl;
 		cout << "FLAG: " << flag_ << endl;
 		cout << "OBS_X: " << center_[0].x << endl;
@@ -228,7 +213,7 @@
 
 	void twoD_to_pcl::small_static(){
 		geometry_msgs::Point wayPoint;
-		twoD_to_pcl::print_static();
+		twoD_to_pcl::print();
 		switch (flag_){
 
 		case 0:
@@ -278,9 +263,6 @@
 		}
 	}
 
-
-// ############################# Decision Code #############################
-
 	void twoD_to_pcl::dynamin_static(){
 
 		if (twoD_to_pcl::clustering()){
@@ -308,7 +290,7 @@
 			dynamic_count_ = 0;	
 		}
 
-		pub_gps_.publish(control_);
+		pub_control_.publish(control_);
 		
 	}
 

@@ -24,7 +24,7 @@
       
     <param name="sep_dynamic"         value="0.01"/>     
     <param name="dynamic_param"         value="5"/>
-    <param name="static_param"         value="5"/>
+    <param name="static_param"         value="10"/>
       
   </node>
 </launch>

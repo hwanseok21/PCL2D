@@ -1,103 +1,10 @@
-#include <ros/ros.h>
-#include <vector>
-#include <cmath>
-#include <time.h>
-
-#include <sensor_msgs/PointCloud2.h>
-#include <sensor_msgs/Imu.h>
-#include <sensor_msgs/MagneticField.h>
-#include <laser_geometry/laser_geometry.h>
-#include <std_msgs/Float64.h>
-#include <geometry_msgs/Point.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/Pose2D.h>
-#include <visualization_msgs/Marker.h>
-#include <tf/transform_listener.h>
-
-#include <pcl_ros/point_cloud.h>
-#include <pcl/point_types.h>
-#include <pcl/point_cloud.h>
-
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/passthrough.h>
-#include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/segmentation/extract_clusters.h>
-
-#include <pcl/io/pcd_io.h>
-#include <pcl/filters/conditional_removal.h>
-#include <pcl/filters/extract_indices.h>
-#include <pcl/filters/extract_indices.h>
-#include <lidar2gps_msgs/lidar2gps.h>
-
-using namespace std;
-typedef pcl::PointXYZI pointType;
-
-class twoD_to_pcl{
-
-private:
-	ros::NodeHandle nh_;
-	ros::Subscriber sub_2d_,sub_imu_;
-	ros::Publisher pub_points_, pub_center_, pub_waypoint_, pub_angle_, pub_speed_, pub_control_;
-
-	std_msgs::Float64 speed_ ;
-	std_msgs::Float64 angle_ ;
-
-	lidar2gps_msgs::lidar2gps control_;
-	
-	//local variable
-	pcl::PointCloud<pointType>::Ptr msg;
-	vector<pointType> center_;
-	//laser_geometry::LaserProjection projector_;
-	//tf::TransformListener listener_;
-
-	//parmeter
-	float min_x_, max_x_,min_y_, max_y_, cluster_tolerance_,
-	finish_point1_, finish_point3_, sep_dynamic_, static_start_dist_;
-	int cluster_minsize_, cluster_maxsize_, static_param_, dynamic_param_;
-	
-	bool heading_record_ = true, finish_static_=false, is_dynamic_ = false;
-	double start_heading_ = 0, cur_heading_ = 0, flag2_offset_;
-
-	float yyy_=1000;	
-	int mission_state_ = 6, flag_= 0, dynamic_count_ = 0, static_count_ = 0;
-	
-	clock_t start, finish;
-
-public:
-	//creator
-	twoD_to_pcl() {
-		// show log in terminal
-		cout << "twoD_to_pcl Initialized" << endl;
-		
-		//pointcloud vector reset
-		msg.reset(new pcl::PointCloud<pointType>());
-		//center_.reset(new vector<pointType>());
-		
-		// initialize Settings
-		initSetup();	
-	}
-	
-	// destructor
-	~twoD_to_pcl(){
-		// show log in terminal
-		cout << "twoD_to_pcl Terminated" << endl;
-	}
-	
-	void initSetup();	
-	void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in);
-	void imuCallback(const sensor_msgs::Imu::ConstPtr& data);
-	bool clustering();
-	void visualize_center(vector<pointType> car);
-	void visualize_waypoint(geometry_msgs::Point wayPoint);
-	float cal_steer(float x, float y);
-	void small_static();
-	void print();
-	void dynamin_static();
-};
+#include "twoD_to_pcl/twoD_to_pcl.h"
+#include "twoD_to_pcl/delaunay_struct.h"
 
 	void twoD_to_pcl::initSetup() {
 		control_.is_dynamic = false;
 		control_.is_static = false;
+		
 		// initialize Flag
 		ros::param::get("~min_x", min_x_);
 		ros::param::get("~max_x", max_x_);
@@ -108,11 +15,19 @@ public:
 		ros::param::get("~cluster_minsize", cluster_minsize_);
 		ros::param::get("~cluster_maxsize", cluster_maxsize_);
 
-		ros::param::get("~flag1_finish_dist", finish_point1_);
-		ros::param::get("~flag3_finish_dist", finish_point3_);
-		ros::param::get("~flag2_time_offset", flag2_offset_);
-		ros::param::get("~static_start_dist", static_start_dist_);
+		//labacon_param
+		ros::param::get("~labacone_speed", speed_.data);
+		ros::param::get("~labacone_offset", labacone_offset_);
+		ros::param::get("~labacone_gradient", labacone_gradient_);
 
+
+		//static param
+		ros::param::get("~static_start_dist", static_start_dist_); //mission start dist
+		ros::param::get("~flag1_finish_dist", finish_point1_); //first obs
+		ros::param::get("~flag3_finish_dist", finish_point3_); //second obs
+		ros::param::get("~flag2_time_offset", flag2_offset_); //after first obs
+
+		//decision param
 		ros::param::get("~sep_dynamic", sep_dynamic_);
 		ros::param::get("~dynamic_param", dynamic_param_);
 		ros::param::get("~static_param", static_param_);
@@ -125,10 +40,11 @@ public:
 		// set publisher
 		pub_points_ = nh_.advertise<sensor_msgs::PointCloud2>("/passed_points", 100);
 		pub_center_ = nh_.advertise<visualization_msgs::Marker>("/obstacle_center", 10);
+		pub_gps_ = nh_.advertise<lidar2gps_msgs::lidar2gps>("/lidar_control", 10);
+		
 		pub_waypoint_ = nh_.advertise<visualization_msgs::Marker>("/waypoint", 10);
 		pub_speed_ = nh_.advertise<std_msgs::Float64>("/commands/motor/speed", 10);
 		pub_angle_ = nh_.advertise<std_msgs::Float64>("/commands/servo/position", 10);
-        pub_control_ = nh_.advertise<lidar2gps_msgs::lidar2gps>("/lidar_control", 10);
 	}
 
 	void twoD_to_pcl::scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in) {
@@ -144,7 +60,7 @@ public:
 				tmp_point.z = 0.0;
 				tmp_point.intensity = float((*scan_in).intensities[i]);
 				
-				double h = abs(cur_heading_ - start_heading_) ;
+				//double h = abs(cur_heading_ - start_heading_) ;
 				//tmp_point.x = x * cos(h) + y * sin(h);
 				//tmp_point.y = x * sin(h) * (-1) + y * cos(h); 
 				tmp_cloud.push_back(tmp_point);
@@ -237,7 +153,7 @@ public:
 			cout <<"yyyy____: " << fabs(yyy_ - center_[0].y) << endl;
 			//cout <<"is dynamic: " << is_dynamic_ << endl;
 			yyy_ = center_[0].y;
-			twoD_to_pcl::visualize_center(center_);
+			visualize_center(center_);
 			return true;
 		}
 		
@@ -269,6 +185,10 @@ public:
 		}
 	}
 	
+
+// ############################# Labacone Code ############################
+
+
 	void twoD_to_pcl::visualize_waypoint(geometry_msgs::Point wayPoint) {
 		visualization_msgs::Marker way_pt;
 
@@ -298,7 +218,53 @@ public:
 		return (degree)*(-1) / 39 + 0.5;
 	}
 
-	void twoD_to_pcl::print(){
+	geometry_msgs::Point twoD_to_pcl::get_waypoint(){
+		//pcl::PointCloud<pointType> waypoint_list;
+		//pointType w;
+		geometry_msgs::Point waypoint;
+		float dist;
+		if (center_.size()>1){
+			for (int i = 1 ; i < center_.size(); i++){
+				dist = sqrt(pow(center_[0].x - center_[i].x, 2) + pow(center_[0].y - center_[i].y, 2));
+				if (dist < 0.5 && (center_[0].x - center_[i].x)/(center_[0].y - center_[i].y) < labacone_gradient_){
+					waypoint.x = (center_[0].x + center_[i].x)/2;
+					waypoint.y = (center_[0].y + center_[i].y)/2;
+					waypoint.z = 0;
+					break;
+				}
+
+				else {
+					waypoint.x = center_[0].x ;
+					waypoint.y = center_[0].y + labacone_offset_*(center_[0].y/fabs(center_[0].y));
+					waypoint.z = 0;
+				}
+			}
+		}
+
+		else{ //size = 1
+			waypoint.x = center_[0].x ;
+			waypoint.y = center_[0].y + labacone_offset_*(center_[0].y/fabs(center_[0].y));
+			waypoint.z = 0;
+		}
+
+		return waypoint;
+	}
+
+	
+	void twoD_to_pcl::laba_control(){
+		geometry_msgs::Point laba;
+		laba = get_waypoint();
+		angle_.data = cal_steer(laba.x,laba.y);  
+		pub_speed_.publish(speed_);
+		pub_angle_.publish(angle_);
+		visualize_waypoint(laba);		
+	}
+	
+
+
+// ############################# Static Code #############################
+
+	void twoD_to_pcl::print_static(){
 		cout << "=======================================================================" << endl;
 		cout << "FLAG: " << flag_ << endl;
 		cout << "OBS_X: " << center_[0].x << endl;
@@ -310,7 +276,7 @@ public:
 
 	void twoD_to_pcl::small_static(){
 		geometry_msgs::Point wayPoint;
-		twoD_to_pcl::print();
+		print_static();
 		switch (flag_){
 
 		case 0:
@@ -360,16 +326,24 @@ public:
 		}
 	}
 
-	void twoD_to_pcl::dynamin_static(){
 
-		if (twoD_to_pcl::clustering()){
+// ############################# Decision Code #############################
+
+	void twoD_to_pcl::dynamin_static(){
+		if (clustering()){
 			cout  << "dynamic_count_: " << dynamic_count_ << endl;
 			cout  << "static_count_: " << static_count_ << endl;
 
-			if (static_count_ >= static_param_){
+			if (labacone_sign_){
+				dynamic_count_ = 0;
+				static_count_ = 0;
+				laba_control();
+			}
+
+			else if (static_count_ >= static_param_){
 				cout << "STATIC_ON" << endl;
 				control_.is_dynamic = false;
-				twoD_to_pcl::small_static();
+				small_static();
 			}
 
 		
@@ -383,11 +357,11 @@ public:
 		}
 
 		else {
-			is_dynamic_ = false;
+			control_.is_dynamic = false;
 			dynamic_count_ = 0;	
 		}
 
-		pub_control_.publish(control_);
+		pub_gps_.publish(control_);
 		
 	}
 

@@ -1,0 +1,104 @@
+#include <ros/ros.h>
+#include <vector>
+#include <cmath>
+#include <time.h>
+
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/Imu.h>
+#include <sensor_msgs/MagneticField.h>
+#include <laser_geometry/laser_geometry.h>
+#include <std_msgs/Float64.h>
+#include <geometry_msgs/Point.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/Pose2D.h>
+#include <visualization_msgs/Marker.h>
+#include <tf/transform_listener.h>
+
+#include <pcl_ros/point_cloud.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/segmentation/extract_clusters.h>
+
+#include <pcl/io/pcd_io.h>
+#include <pcl/filters/conditional_removal.h>
+#include <pcl/filters/extract_indices.h>
+#include <pcl/filters/extract_indices.h>
+#include <lidar2gps_msgs/lidar2gps.h>
+
+using namespace std;
+typedef pcl::PointXYZI pointType;
+
+class twoD_to_pcl{
+
+private:
+	ros::NodeHandle nh_;
+	ros::Subscriber sub_2d_,sub_imu_;
+	ros::Publisher pub_points_, pub_center_, pub_waypoint_, pub_angle_, pub_speed_, pub_gps_ ,pub_speed_, pub_steer_;
+
+	std_msgs::Float64 speed_ ;
+	std_msgs::Float64 angle_ ;
+
+	lidar2gps_msgs::lidar2gps control_;
+	
+	//local variable
+	pcl::PointCloud<pointType>::Ptr msg;
+	vector<pointType> center_;
+	//laser_geometry::LaserProjection projector_;
+	//tf::TransformListener listener_;
+
+	//parmeter
+	float min_x_, max_x_,min_y_, max_y_, cluster_tolerance_,
+	finish_point1_, finish_point3_, sep_dynamic_, static_start_dist_;
+	int cluster_minsize_, cluster_maxsize_, static_param_, dynamic_param_;
+	
+	bool heading_record_ = true, finish_static_=false, is_dynamic_ = false;
+	double start_heading_ = 0, cur_heading_ = 0, flag2_offset_;
+
+	float yyy_=1000;	
+	int mission_state_ = 6, flag_= 0, dynamic_count_ = 0, static_count_ = 0;
+	
+	clock_t start, finish;
+
+public:
+	//creator
+	twoD_to_pcl() {
+		// show log in terminal
+		cout << "twoD_to_pcl Initialized" << endl;
+		
+		//pointcloud vector reset
+		msg.reset(new pcl::PointCloud<pointType>());
+		//center_.reset(new vector<pointType>());
+		
+		// initialize Settings
+		initSetup();	
+	}
+	
+	// destructor
+	~twoD_to_pcl(){
+		// show log in terminal
+		cout << "twoD_to_pcl Terminated" << endl;
+	}
+	
+	void initSetup();	
+	void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_in);
+	void imuCallback(const sensor_msgs::Imu::ConstPtr& data);
+	bool clustering();
+	
+	void visualize_center(vector<pointType> car);
+	
+	//labacone
+	void visualize_waypoint(geometry_msgs::Point wayPoint);
+	float cal_steer(float x, float y);
+	
+	//static
+	void small_static();
+	void print_static();
+	
+	//decision
+	void dynamin_static();
+};
+

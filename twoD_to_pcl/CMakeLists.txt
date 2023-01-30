@@ -28,6 +28,7 @@ generate_messages(
 
 
 catkin_package(
+  INCLUDE_DIRS include 
   LIBRARIES twoD_to_pcl
   CATKIN_DEPENDS geometry_msgs roscpp sensor_msgs visualization_msgs pcl_ros laser_geometry  lidar2gps_msgs
 #  DEPENDS system_lib
@@ -35,12 +36,13 @@ catkin_package(
 
 
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
 )
 
 
 add_executable(${PROJECT_NAME}_node src/twoD_to_pcl.cpp) 
+
 
 target_link_libraries(${PROJECT_NAME}_node 
 ${catkin_LIBRARIES})
